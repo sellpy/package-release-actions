@@ -36,6 +36,28 @@ only a `vX.Y.Z` tag, as a pointer for humans — and tags are not covered by bra
 protection, so `GITHUB_TOKEN` is sufficient. A PAT is tied to one person and expires; when
 it lapses the whole release path goes down with it.
 
+## Why checkout overrides the ref
+
+The workflow triggers on a pull request closing rather than on a push to the default branch,
+because the semver label lives on the pull request — a push event carries no labels, so there
+would be nothing to read `major`/`minor`/`patch` from.
+
+That trigger is what makes the override necessary. On a `pull_request` event, checkout does
+not hand you the default branch. It hands you a merge preview GitHub computed in advance —
+"this PR's branch merged into master" — calculated when the PR was last updated and never
+refreshed when master moves afterwards:
+
+1. PR A is opened. GitHub computes A-merged-into-master.
+2. PR B merges. Master now has B.
+3. PR A merges, this workflow fires, and checkout returns the preview from step 1 — which has
+   no B in it.
+4. The published tarball is missing B, even though master has it.
+
+`ref: ${{ github.event.repository.default_branch }}` fetches the branch's actual current tip
+instead. None of this applies to a `push`-triggered workflow, where the default checkout is
+already the commit that just landed — which is why the override looks redundant until you
+notice the trigger.
+
 ## Using the publish workflow
 
 ```yaml
