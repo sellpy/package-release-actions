@@ -1,0 +1,36 @@
+name: Semantic version label
+description: >
+  Resolves a pull request's semantic version label to an npm bump type, failing unless
+  exactly one of major/minor/patch is present. This is the single definition of that
+  rule across the organisation, used by both PR gates and publish workflows.
+inputs:
+  labels:
+    description: JSON array of the pull request's label names.
+    required: true
+outputs:
+  bump:
+    description: The npm bump type - major, minor or patch.
+    value: ${{ steps.resolve.outputs.bump }}
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        LABELS: ${{ inputs.labels }}
+      run: |
+        set -euo pipefail
+        FOUND="$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(",")' <<< "$LABELS")"
+        case "$FOUND" in
+          major|minor|patch)
+            echo "bump=$FOUND" >> "$GITHUB_OUTPUT"
+            ;;
+          "")
+            echo "::error::Missing semantic version label. Add exactly one of 'major', 'minor' or 'patch'."
+            exit 1
+            ;;
+          *)
+            echo "::error::Conflicting semantic version labels ($FOUND). Keep exactly one of 'major', 'minor' or 'patch'."
+            exit 1
+            ;;
+        esac

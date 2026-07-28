@@ -1,0 +1,136 @@
+name: Publish npm package
+
+# The default-branch publish path for a single-package npm repo, shared across the
+# organisation. The registry is the source of truth for the released version: the version
+# field in the caller's package.json is a placeholder and is never read.
+#
+# Callers decide when this runs and what tests gate it. See README.md.
+
+on:
+  workflow_call:
+    inputs:
+      labels:
+        description: >
+          JSON array of the merged pull request's label names. Pass
+          toJSON(github.event.pull_request.labels.*.name).
+        required: true
+        type: string
+      node-version-file:
+        description: File holding the Node version to install.
+        required: false
+        type: string
+        default: '.nvmrc'
+      registry:
+        description: >
+          Registry that is both the source of truth for the released version and the
+          publish target.
+        required: false
+        type: string
+        default: 'https://registry.npmjs.org'
+      runs-on:
+        description: Runner label for the publish job.
+        required: false
+        type: string
+        default: 'ubuntu-22.04'
+    secrets:
+      NPM_TOKEN:
+        description: >
+          Token with publish rights on the package and read access to its own versions.
+          Read access matters: the version resolution below asks the registry for the
+          current version before bumping it.
+        required: true
+    outputs:
+      version:
+        description: The version that was published.
+        value: ${{ jobs.publish.outputs.version }}
+
+jobs:
+  publish:
+    name: Publish npm package
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      # Pushing the version tag. Tags are not covered by branch protection, so the
+      # default GITHUB_TOKEN is enough and no deploy PAT is needed.
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      # On a pull_request event the default checkout ref is the PR's merge commit, which
+      # is the PR merged into the base branch as it stood when the PR was last updated.
+      # Publishing from that would ship stale code whenever another PR merged in between,
+      # so check out the live tip of the default branch instead.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          registry-url: ${{ inputs.registry }}
+
+      # npm ci runs first, against whatever .npmrc the calling repo commits. Where a repo
+      # has private @sellpy dependencies, that committed token is what can read them and
+      # NPM_TOKEN may not be able to. The registry answers 404 rather than 403 for a
+      # private package it will not serve, so overwriting .npmrc before installing turns a
+      # permissions problem into a confusing missing-tarball error.
+      - name: Clean npm install
+        run: npm ci
+
+      # NPM_TOKEN covers the steps that follow: the version read and the publish.
+      - name: Prepare npm config for publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          HOST="${REGISTRY#http://}"
+          HOST="${HOST#https://}"
+          printf '//%s/:_authToken=%s\n' "${HOST%/}" "$NPM_TOKEN" > .npmrc
+
+      # Pinned to the same tag as this workflow. The two are released together, so bump
+      # both when cutting a new major. A './'-relative path cannot be used here: inside a
+      # reusable workflow it would resolve against the caller's checkout, not this repo.
+      - name: Resolve semantic version bump
+        id: bump
+        uses: sellpy/package-release-actions/semver-label@v1
+        with:
+          labels: ${{ inputs.labels }}
+
+      - name: Resolve next version from registry
+        id: version
+        env:
+          BUMP: ${{ steps.bump.outputs.bump }}
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./package.json').name")"
+          # The read is pinned to the registry explicitly. Left unpinned it would follow
+          # any scoped registry override in .npmrc or package.json, so once a package is
+          # published to more than one registry the bump could be computed from the wrong
+          # one and the two would drift apart permanently.
+          CURRENT="$(npm view "$NAME" version --registry="$REGISTRY")"
+          if [ -z "$CURRENT" ]; then
+            echo "::error::$NAME has no published version on $REGISTRY. Publish the first version manually, then this workflow can take over."
+            exit 1
+          fi
+          # The registry is the source of truth for the released version. The version
+          # field in package.json on the default branch is a placeholder and is ignored.
+          npm pkg set version="$CURRENT"
+          NEXT="$(npm version --no-git-tag-version --allow-same-version "$BUMP")"
+          NEXT="${NEXT#v}"
+          echo "Registry latest is $CURRENT, publishing $NEXT ($BUMP)"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish npm version
+        run: npm publish --registry="${{ inputs.registry }}"
+
+      # Publish first, tag second. The publish is the irreversible step and the registry
+      # is what the next run reads, so a failure here leaves no stale state: the next run
+      # still resolves the correct next version.
+      - name: Tag published version
+        env:
+          VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
