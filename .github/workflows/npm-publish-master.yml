@@ -5,11 +5,6 @@ name: Publish npm package
 # field in the caller's package.json is a placeholder and is never read.
 #
 # Callers decide when this runs and what tests gate it. See README.md.
-#
-# The contract is deliberately narrow - one input, one secret. Node version, runner and
-# registry are the same in every repo that publishes this way, so they are fixed here
-# rather than exposed as inputs. An optional input can be added later without a breaking
-# change if that ever stops being true.
 
 on:
   workflow_call:
