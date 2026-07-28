@@ -69,9 +69,14 @@ The caller owns the trigger, the concurrency group and the test gate, so each re
 own validation workflow and its own publish secret name. `actions/checkout` inside a
 reusable workflow checks out the *calling* repo, which is what we want.
 
-Inputs beyond `labels` are optional: `node-version-file` (default `.nvmrc`), `registry`
-(default `https://registry.npmjs.org`), `runs-on` (default `ubuntu-22.04`). The workflow
-outputs `version`, the version it published.
+`labels` is the only input and `NPM_TOKEN` the only secret, which keeps the contract small
+enough to hold stable across `@v1`. Node version (`.nvmrc`), runner (`ubuntu-22.04`) and
+registry (`https://registry.npmjs.org`) are fixed in the workflow, because they are the same
+in every repo that publishes this way — parameterising them would encode drift rather than
+remove it. An optional input can be added later without a breaking change if one of them
+ever genuinely needs to vary.
+
+The workflow outputs `version`, the version it published.
 
 ## Using the label action on its own
 

@@ -5,6 +5,11 @@ name: Publish npm package
 # field in the caller's package.json is a placeholder and is never read.
 #
 # Callers decide when this runs and what tests gate it. See README.md.
+#
+# The contract is deliberately narrow - one input, one secret. Node version, runner and
+# registry are the same in every repo that publishes this way, so they are fixed here
+# rather than exposed as inputs. An optional input can be added later without a breaking
+# change if that ever stops being true.
 
 on:
   workflow_call:
@@ -15,23 +20,6 @@ on:
           toJSON(github.event.pull_request.labels.*.name).
         required: true
         type: string
-      node-version-file:
-        description: File holding the Node version to install.
-        required: false
-        type: string
-        default: '.nvmrc'
-      registry:
-        description: >
-          Registry that is both the source of truth for the released version and the
-          publish target.
-        required: false
-        type: string
-        default: 'https://registry.npmjs.org'
-      runs-on:
-        description: Runner label for the publish job.
-        required: false
-        type: string
-        default: 'ubuntu-22.04'
     secrets:
       NPM_TOKEN:
         description: >
@@ -47,11 +35,15 @@ on:
 jobs:
   publish:
     name: Publish npm package
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ubuntu-22.04
     permissions:
       # Pushing the version tag. Tags are not covered by branch protection, so the
       # default GITHUB_TOKEN is enough and no deploy PAT is needed.
       contents: write
+    env:
+      # Defined once because four steps below need it. Job-level env reaches every step's
+      # shell, so the run blocks read $REGISTRY directly.
+      REGISTRY: https://registry.npmjs.org
     outputs:
       version: ${{ steps.version.outputs.next }}
     steps:
@@ -65,8 +57,8 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ${{ inputs.node-version-file }}
-          registry-url: ${{ inputs.registry }}
+          node-version-file: .nvmrc
+          registry-url: ${{ env.REGISTRY }}
 
       # npm ci runs first, against whatever .npmrc the calling repo commits. Where a repo
       # has private @sellpy dependencies, that committed token is what can read them and
@@ -80,7 +72,6 @@ jobs:
       - name: Prepare npm config for publish
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          REGISTRY: ${{ inputs.registry }}
         run: |
           set -euo pipefail
           HOST="${REGISTRY#http://}"
@@ -100,7 +91,6 @@ jobs:
         id: version
         env:
           BUMP: ${{ steps.bump.outputs.bump }}
-          REGISTRY: ${{ inputs.registry }}
         run: |
           set -euo pipefail
           NAME="$(node -p "require('./package.json').name")"
@@ -122,7 +112,7 @@ jobs:
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
 
       - name: Publish npm version
-        run: npm publish --registry="${{ inputs.registry }}"
+        run: npm publish --registry="$REGISTRY"
 
       # Publish first, tag second. The publish is the irreversible step and the registry
       # is what the next run reads, so a failure here leaves no stale state: the next run
