@@ -80,12 +80,19 @@ jobs:
   publish:
     if: github.event.pull_request.merged == true
     needs: validate
+    permissions:
+      contents: write
     uses: sellpy/package-release-actions/.github/workflows/npm-publish-master.yml@v1
     with:
       labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
 ```
+
+`permissions: contents: write` is required in the caller and is not optional. A called
+workflow can lower the permissions it is handed but never raise them, so the `contents: write`
+declared inside this workflow is a ceiling, not a grant — without it in the caller, the tag
+push fails with a 403 that says nothing about permissions.
 
 The caller owns the trigger, the concurrency group and the test gate, so each repo keeps its
 own validation workflow and its own publish secret name. `actions/checkout` inside a
