@@ -8,11 +8,14 @@ Shared release plumbing for Sellpy's npm packages. Two things live here:
 - **`.github/workflows/npm-publish-master.yml`** — a reusable workflow that publishes a
   single-package repo from its default branch.
 
-This repository is private, so consuming repositories can resolve the action and the workflow
-only because it is shared with the organisation — Settings → Actions → General → "Accessible
-from repositories in the sellpy organization". If that is ever turned off, every consumer's
-publish job fails at workflow resolution, with an error that looks nothing like an npm
-problem.
+This repository is public so that consuming repositories — including private ones — can
+resolve the action and the reusable workflow without any org-level sharing setting to keep
+enabled. That is the only reason it is public: it is an internal tool, built around Sellpy's
+conventions, and it is unlikely to be useful outside them. No support or stability promises
+are made to anyone outside Sellpy, and issues or pull requests from outside are not expected.
+
+Nothing here is a secret: the action and the workflow contain no credentials. Consumers pass
+their own `NPM_TOKEN` in, and it stays in the calling repository's secrets.
 
 ## Why the version is not in package.json
 
