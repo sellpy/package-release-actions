@@ -11,7 +11,7 @@ Shared release plumbing for Sellpy's npm packages. Three things live here:
   throwaway preview build of a single-package repo from any other branch.
 
 This repository is public so that consuming repositories — including private ones — can
-resolve the action and the reusable workflow without any org-level sharing setting to keep
+resolve the action and the reusable workflows without any org-level sharing setting to keep
 enabled. That is the only reason it is public: it is an internal tool, built around Sellpy's
 conventions, and it is unlikely to be useful outside them. No support or stability promises
 are made to anyone outside Sellpy, and issues or pull requests from outside are not expected.
