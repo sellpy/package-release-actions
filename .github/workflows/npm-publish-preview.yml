@@ -34,9 +34,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.next }}
     steps:
-      # The default checkout is correct here: a preview is triggered by a push to the branch
-      # being published, or dispatched against a branch, so the ref already is the commit to
-      # publish. The master workflow overrides it only because it triggers on a pull request.
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
@@ -44,12 +41,7 @@ jobs:
           node-version-file: .nvmrc
           registry-url: ${{ env.REGISTRY }}
 
-      # There is no explicit build step: the tarball is built by npm's own lifecycle hooks.
-      # A repo missing them publishes successfully with an empty package, which is the one
-      # failure mode in this pipeline that produces no error, so it is checked up front
-      # rather than discovered by a consumer. It has already happened twice — once for a
-      # missing hook, once for a hook that ran with the wrong compiler.
-      - name: Require a build hook
+      - name: Require a prepare, prepack or prepublishOnly build hook
         run: |
           set -euo pipefail
           HOOKS="$(node -p "Object.keys(require('./package.json').scripts || {}).filter((s) => ['prepare', 'prepack', 'prepublishOnly'].includes(s)).join(', ')")"
@@ -59,15 +51,9 @@ jobs:
           fi
           echo "Build hook(s) present: $HOOKS"
 
-      # npm ci runs first, against whatever .npmrc the calling repo commits. Where a repo
-      # has private @sellpy dependencies, that committed token is what can read them and
-      # NPM_TOKEN may not be able to. The registry answers 404 rather than 403 for a
-      # private package it will not serve, so overwriting .npmrc before installing turns a
-      # permissions problem into a confusing missing-tarball error.
       - name: Clean npm install
         run: npm ci
 
-      # NPM_TOKEN covers the publish that follows.
       - name: Prepare npm config for publish
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -82,14 +68,9 @@ jobs:
         run: |
           set -euo pipefail
           # npm versions and dist-tags cannot contain '/', and branch names can: a branch
-          # like int-2497/urbify would otherwise produce an invalid version. Sanitised
-          # unconditionally rather than on request, so dispatching this against an
-          # arbitrary branch is safe in every repo that allows it.
+          # like int-2497/urbify would otherwise produce an invalid version.
           SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
           NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}"
-          # --no-git-tag-version keeps the bump in the runner: nothing is committed and
-          # nothing is pushed back to the branch. --allow-same-version is what makes
-          # re-running a preview on an unchanged commit work rather than fail.
           npm version --no-git-tag-version --allow-same-version "$NEXT" > /dev/null
           echo "Publishing $NEXT under the $SEGMENT dist-tag"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"

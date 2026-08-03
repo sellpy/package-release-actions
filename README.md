@@ -160,8 +160,13 @@ Two of the three workflows this replaced ran `npm version` and then
 `git push --follow-tags` back to the branch, which is the same pattern the master path was
 changed to stop doing, for the same reasons — plus one specific to previews: `npm version`
 trips over the tag it created on the previous run, so re-running a preview on an unchanged
-commit fails. `--no-git-tag-version --allow-same-version` fixes that and needs no git
-identity, no `contents: write` and no push.
+commit fails.
+
+Both flags on `npm version` are load-bearing. `--no-git-tag-version` keeps the bump inside the
+runner, so there is no commit and no tag to push and the workflow needs neither a git identity
+nor `contents: write`. `--allow-same-version` is what makes a re-run on an unchanged commit
+succeed, since the version it computes is derived from the SHA and therefore identical to the
+one already in `package.json` from the previous run.
 
 One consequence to know about when porting a repo that used to push back: the version field
 it last pushed is now frozen on that branch forever. Reset it to the `0.0.0-managed`
@@ -183,6 +188,21 @@ cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
 `dev` and `canary` are long-lived and re-cut from the default branch by hand, so a hook added
 to the default branch is not present on them until someone merges it across. That is why the
 check lives in the shared workflow rather than being fixed once per repo.
+
+### Why `npm ci` runs before the publish token is written
+
+Both workflows install first and only then overwrite `.npmrc` with `NPM_TOKEN`. The order is
+deliberate and easy to "tidy" into a bug.
+
+`npm ci` runs against whatever `.npmrc` the calling repo commits. Where a repo has private
+`@sellpy/*` dependencies — `pdf-creator` is the current case — that committed token is what can
+read them, and `NPM_TOKEN` generally cannot: a publish token for one package carries no read
+rights on another. Writing `NPM_TOKEN` before installing therefore breaks the install.
+
+What makes it worth documenting rather than leaving to be rediscovered is the error you get.
+npm answers **404, not 403**, for a private package the caller may not fetch, so the failure
+reads as a missing tarball or a bad version rather than a permissions problem, and the obvious
+next move — checking whether the dependency exists — finds nothing wrong.
 
 ## Using the label action on its own
 
