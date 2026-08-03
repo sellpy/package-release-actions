@@ -1,0 +1,82 @@
+name: Publish npm preview build
+
+# The preview path for a single-package npm repo, shared across the organisation. Publishes
+# a throwaway 0.0.0-<branch>-<sha> version under a dist-tag named after the branch, so a
+# consumer can install the tip of a branch without a release.
+#
+# The commit is the source of truth here, the way the registry is on the master path: the
+# version embeds the branch and the short SHA, so it is traceable without a tag and nothing
+# has to be pushed back to the branch. The version field in the caller's package.json is a
+# placeholder and is never read.
+#
+# Callers decide when this runs and what validation gates it. See README.md.
+
+on:
+  workflow_call:
+    secrets:
+      NPM_TOKEN:
+        description: Token with publish rights on the package.
+        required: true
+    outputs:
+      version:
+        description: The version that was published.
+        value: ${{ jobs.publish.outputs.version }}
+
+jobs:
+  publish:
+    name: Publish npm preview build
+    runs-on: ubuntu-22.04
+    permissions:
+      # Nothing is pushed back — no commit, no tag — so read access is all this needs.
+      contents: read
+    env:
+      REGISTRY: https://registry.npmjs.org
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          registry-url: ${{ env.REGISTRY }}
+
+      - name: Require a prepare, prepack or prepublishOnly build hook
+        run: |
+          set -euo pipefail
+          HOOKS="$(node -p "Object.keys(require('./package.json').scripts || {}).filter((s) => ['prepare', 'prepack', 'prepublishOnly'].includes(s)).join(', ')")"
+          if [ -z "$HOOKS" ]; then
+            echo "::error::package.json defines no prepare, prepack or prepublishOnly script, so npm publish would build nothing and publish an empty package. Add one before using this workflow."
+            exit 1
+          fi
+          echo "Build hook(s) present: $HOOKS"
+
+      - name: Clean npm install
+        run: npm ci
+
+      - name: Prepare npm config for publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          HOST="${REGISTRY#http://}"
+          HOST="${HOST#https://}"
+          printf '//%s/:_authToken=%s\n' "${HOST%/}" "$NPM_TOKEN" > .npmrc
+
+      - name: Resolve preview version from branch and commit
+        id: version
+        run: |
+          set -euo pipefail
+          # npm versions and dist-tags cannot contain '/', and branch names can: a branch
+          # like int-2497/urbify would otherwise produce an invalid version.
+          SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
+          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}"
+          npm version --no-git-tag-version --allow-same-version "$NEXT" > /dev/null
+          echo "Publishing $NEXT under the $SEGMENT dist-tag"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "tag=$SEGMENT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish npm version
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: npm publish --registry="$REGISTRY" --tag="$TAG"

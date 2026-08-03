@@ -1,15 +1,17 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Two things live here:
+Shared release plumbing for Sellpy's npm packages. Three things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
   definition of that rule.
 - **`.github/workflows/npm-publish-master.yml`** — a reusable workflow that publishes a
   single-package repo from its default branch.
+- **`.github/workflows/npm-publish-preview.yml`** — a reusable workflow that publishes a
+  throwaway preview build of a single-package repo from any other branch.
 
 This repository is public so that consuming repositories — including private ones — can
-resolve the action and the reusable workflow without any org-level sharing setting to keep
+resolve the action and the reusable workflows without any org-level sharing setting to keep
 enabled. That is the only reason it is public: it is an internal tool, built around Sellpy's
 conventions, and it is unlikely to be useful outside them. No support or stability promises
 are made to anyone outside Sellpy, and issues or pull requests from outside are not expected.
@@ -110,6 +112,96 @@ ever genuinely needs to vary.
 
 The workflow outputs `version`, the version it published.
 
+## Using the preview-build workflow
+
+A preview build publishes the tip of a branch as `0.0.0-<branch>-<sha>` under a dist-tag named
+after the branch, so `npm i @sellpy/commons@canary` — or `@int-2497-urbify` — resolves it. It
+is throwaway: no tag, no release, nothing written back to the branch.
+
+```yaml
+name: Publish preview build
+on:
+  push:
+    branches: [dev, canary]
+
+concurrency:
+  group: publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/code-validation.yml
+  publish:
+    needs: validate
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-preview.yml@v1
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
+```
+
+This contract is smaller than the master one: **no inputs at all**, one secret, and the same
+`version` output. The dist-tag and the version segment both derive from `github.ref_name`, so
+there is nothing for a caller to pass and nothing for two repos to disagree about. As with the
+master workflow, the caller owns the trigger, the concurrency group and the validation gate.
+
+No `permissions` block is needed, unlike the master workflow — nothing is pushed back, so the
+default token is already sufficient.
+
+Add `workflow_dispatch` to the trigger where publishing an arbitrary feature branch is
+useful. Branch names are sanitised into the version segment and the dist-tag
+(`int-2497/urbify` → `int-2497-urbify`), so any branch is safe to dispatch against; the
+sanitisation is unconditional rather than an option, because a repo that does not need it is
+unaffected by it.
+
+### Why a preview does not push the version back
+
+Two of the three workflows this replaced ran `npm version` and then
+`git push --follow-tags` back to the branch, which is the same pattern the master path was
+changed to stop doing, for the same reasons — plus one specific to previews: `npm version`
+trips over the tag it created on the previous run, so re-running a preview on an unchanged
+commit fails.
+
+Both flags on `npm version` are load-bearing. `--no-git-tag-version` keeps the bump inside the
+runner, so there is no commit and no tag to push and the workflow needs neither a git identity
+nor `contents: write`. `--allow-same-version` is what makes a re-run on an unchanged commit
+succeed, since the version it computes is derived from the SHA and therefore identical to the
+one already in `package.json` from the previous run.
+
+One consequence to know about when porting a repo that used to push back: the version field
+it last pushed is now frozen on that branch forever. Reset it to the `0.0.0-managed`
+placeholder, on **every** preview branch rather than just the one you happened to look at.
+
+### Why there is no build step, and why the run can fail before installing
+
+Neither workflow here builds explicitly. Both rely on npm's lifecycle hooks — `prepare`,
+`prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the build stays
+defined by the repo rather than duplicated in shared CI.
+
+The preview workflow checks that at least one of those hooks exists and fails the run if none
+does. That check is not theoretical: `automation-commons` had no build hook and would have
+published an empty `dist/`, and `react-native-scroll-anchor`'s hook fired but resolved the
+wrong `tsc`. A package published with no build output is the one failure in this pipeline that
+produces a green run and is discovered by a consumer instead, which is worth a step that
+cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
+
+`dev` and `canary` are long-lived and re-cut from the default branch by hand, so a hook added
+to the default branch is not present on them until someone merges it across. That is why the
+check lives in the shared workflow rather than being fixed once per repo.
+
+### Why `npm ci` runs before the publish token is written
+
+Both workflows install first and only then overwrite `.npmrc` with `NPM_TOKEN`. The order is
+deliberate and easy to "tidy" into a bug.
+
+`npm ci` runs against whatever `.npmrc` the calling repo commits. Where a repo has private
+`@sellpy/*` dependencies — `pdf-creator` is the current case — that committed token is what can
+read them, and `NPM_TOKEN` generally cannot: a publish token for one package carries no read
+rights on another. Writing `NPM_TOKEN` before installing therefore breaks the install.
+
+What makes it worth documenting rather than leaving to be rediscovered is the error you get.
+npm answers **404, not 403**, for a private package the caller may not fetch, so the failure
+reads as a missing tarball or a bad version rather than a permissions problem, and the obvious
+next move — checking whether the dependency exists — finds nothing wrong.
+
 ## Using the label action on its own
 
 The PR gate needs the same rule, without a publish:
@@ -142,10 +234,8 @@ as a pair — bump both when cutting a new major.
 
 ## What this does not cover
 
-- **Preview builds.** `dev`/`canary` publishes stay per-repo: some sanitise arbitrary
-  branch names into a version segment and dist-tag, and that logic is not uniform enough to
-  share usefully.
 - **Monorepos.** `sellpy/design-system` publishes three packages with independent versions
-  and cross-package pinning. It needs its own shape.
+  and cross-package pinning. Both workflows here resolve one package from the repo root, so
+  neither can serve it; it needs a workspace-aware variant of each.
 - **Release-triggered packages.** `sellpy/react-native-scroll-anchor` publishes on a GitHub
   release rather than a labelled merge.
