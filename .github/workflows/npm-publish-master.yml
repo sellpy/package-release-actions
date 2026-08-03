@@ -50,6 +50,16 @@ jobs:
           node-version-file: .nvmrc
           registry-url: ${{ env.REGISTRY }}
 
+      - name: Require a prepare, prepack or prepublishOnly build hook
+        run: |
+          set -euo pipefail
+          HOOKS="$(node -p "Object.keys(require('./package.json').scripts || {}).filter((s) => ['prepare', 'prepack', 'prepublishOnly'].includes(s)).join(', ')")"
+          if [ -z "$HOOKS" ]; then
+            echo "::error::package.json defines no prepare, prepack or prepublishOnly script, so npm publish would build nothing and publish an empty package. Add one before using this workflow."
+            exit 1
+          fi
+          echo "Build hook(s) present: $HOOKS"
+
       # npm ci runs first, against whatever .npmrc the calling repo commits. Where a repo
       # has private @sellpy dependencies, that committed token is what can read them and
       # NPM_TOKEN may not be able to. The registry answers 404 rather than 403 for a
