@@ -124,8 +124,6 @@ on:
   push:
     branches: [dev, canary]
 
-# Serialise publishes per branch. Never cancel: a cancelled run could stop midway through
-# publishing.
 concurrency:
   group: publish-${{ github.ref_name }}
   cancel-in-progress: false
