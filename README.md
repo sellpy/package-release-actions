@@ -1,6 +1,6 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Three things live here:
+Shared release plumbing for Sellpy's npm packages. Four things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
@@ -9,6 +9,8 @@ Shared release plumbing for Sellpy's npm packages. Three things live here:
   single-package repo from its default branch.
 - **`.github/workflows/npm-publish-preview.yml`** — a reusable workflow that publishes a
   throwaway preview build of a single-package repo from any other branch.
+- **`.github/workflows/npm-publish-workspace-master.yml`** — the default-branch publish for one
+  workspace of a monorepo, called once per package.
 
 This repository is public so that consuming repositories — including private ones — can
 resolve the action and the reusable workflows without any org-level sharing setting to keep
@@ -172,9 +174,9 @@ placeholder, on **every** preview branch rather than just the one you happened t
 
 ### Why there is no build step, and why the run can fail before installing
 
-Neither workflow here builds explicitly. Both rely on npm's lifecycle hooks — `prepare`,
-`prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the build stays
-defined by the repo rather than duplicated in shared CI.
+None of the publish workflows here build explicitly. They all rely on npm's lifecycle hooks —
+`prepare`, `prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the
+build stays defined by the repo rather than duplicated in shared CI.
 
 Both check that at least one of those hooks exists and fail the run if none does. That check is
 not theoretical: `automation-commons` had no build hook and would have published an empty
@@ -204,6 +206,83 @@ What makes it worth documenting rather than leaving to be rediscovered is the er
 npm answers **404, not 403**, for a private package the caller may not fetch, so the failure
 reads as a missing tarball or a bad version rather than a permissions problem, and the obvious
 next move — checking whether the dependency exists — finds nothing wrong.
+
+## Using the workspace publish workflow
+
+`npm-publish-workspace-master.yml` is `npm-publish-master.yml` resolved against a workspace
+directory instead of the repo root. One call publishes one workspace. It exists because neither
+single-package workflow can serve a monorepo: both read the root `package.json` for the package
+name, the version and the build hook.
+
+```yaml
+name: Publish master
+on:
+  pull_request:
+    branches: [master]
+    types: [closed]
+
+concurrency:
+  group: publish-master
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/code-validation.yml
+  commons:
+    if: github.event.pull_request.merged == true
+    needs: validate
+    permissions:
+      contents: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v1
+    with:
+      workspace: packages/commons
+      labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
+  react-web:
+    if: contains(github.event.pull_request.labels.*.name, 'react-web')
+    needs: commons
+    permissions:
+      contents: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v1
+    with:
+      workspace: packages/react-web
+      labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      pin-dependency: '@sellpy/design-system-commons@${{ needs.commons.outputs.version }}'
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
+```
+
+Two inputs are required — `workspace` and `labels` — plus the same `NPM_TOKEN` secret and
+`version` output as the single-package workflow, and the same `contents: write` requirement in
+the caller.
+
+### The tag prefix is derived, not configured
+
+`packages/react-web` tags `react-web_v18.3.1`. The workspace basename is the prefix, because a
+monorepo cannot use a bare `vX.Y.Z` for three packages with independent versions. That is one
+input this workflow does not need.
+
+### Ordering is the caller's job, and `needs:` is what does it
+
+`pin-dependency` installs an exact version of a sibling into this workspace before publishing,
+so the published tarball depends on a concrete version rather than a floating range. The version
+has to be on the registry already, which means the call that publishes the sibling must have
+finished — `needs: commons` above is not stylistic, it is the ordering.
+
+Sequence the calls with `needs:` rather than letting them fan out. Three parallel calls would
+race, and the failure is not a clean error: `react-web` would install whatever version of
+`commons` the registry happened to have at that moment.
+
+### Why nothing is reset afterwards
+
+The pin exists only in the runner. Nothing is committed and nothing is pushed to the default
+branch, so the `"*"` range stays in git — which is what makes the workspace resolve locally for
+development — while the published package carries the exact version.
+
+That is a behaviour change worth being explicit about for a repo migrating from a workflow that
+committed the pin: the *reset* step such a workflow needs disappears along with the push, rather
+than having to be reimplemented here.
 
 ## Using the label action on its own
 
@@ -235,10 +314,22 @@ inputs or behaviour.
 `npm-publish-master.yml` references `semver-label@v1` internally, so the two are released
 as a pair — bump both when cutting a new major.
 
+## Known duplication, and when to remove it
+
+`npm-publish-workspace-master.yml` repeats three things from `npm-publish-master.yml`: the
+registry read and bump, the npm auth ordering, and the build-hook check. That is deliberate and
+temporary. The seams are only guessable from one example, and `semver-label` earned its
+extraction by being duplicated first rather than by being predicted.
+
+Extract them into composite actions once the workspace workflow has published a real release —
+at which point there are two working examples to draw the boundary from, and a third caller
+(a workspace preview path) to check it against. Moving logic into internal actions changes
+nothing for callers, so that refactor stays within `v1`.
+
 ## What this does not cover
 
-- **Monorepos.** `sellpy/design-system` publishes three packages with independent versions
-  and cross-package pinning. Both workflows here resolve one package from the repo root, so
-  neither can serve it; it needs a workspace-aware variant of each.
+- **Monorepo preview builds.** `npm-publish-preview.yml` reads the repo root, so
+  `sellpy/design-system`'s preview path still needs a workspace-aware variant. Deferred until
+  the master path here has shipped a release.
 - **Release-triggered packages.** `sellpy/react-native-scroll-anchor` publishes on a GitHub
   release rather than a labelled merge.
