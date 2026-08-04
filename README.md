@@ -319,15 +319,20 @@ as a pair — bump both when cutting a new major.
 
 ## Known duplication, and when to remove it
 
-`npm-publish-workspace-master.yml` repeats three things from `npm-publish-master.yml`: the
-registry read and bump, the npm auth ordering, and the build-hook check. That is deliberate and
-temporary. The seams are only guessable from one example, and `semver-label` earned its
-extraction by being duplicated first rather than by being predicted.
+`npm-publish-workspace-master.yml` still repeats two things from `npm-publish-master.yml`: the
+registry read and bump, and the npm auth ordering. That is deliberate and temporary.
 
-Extract them into composite actions once the workspace workflow has published a real release —
-at which point there are two working examples to draw the boundary from, and a third caller
-(a workspace preview path) to check it against. Moving logic into internal actions changes
-nothing for callers, so that refactor stays within `v1`.
+They look more alike than they are. The version resolution differs between root and workspace —
+`npm pkg set --workspace`, and the version read back from `package.json` because `npm version`
+prefixes the workspace name in its output — and differs again between master and preview, where
+the version comes from the commit rather than the registry. Extracting them means choosing one
+shape for three genuinely different behaviours, which is worth doing against a working workspace
+release rather than ahead of one.
+
+The build-hook check is the counter-example and is already extracted, into
+`require-build-hook`: it was byte-identical in every workflow with a single parameter, so its
+seam was a fact rather than a guess. Apply the same test to the rest — identical code with one
+input, not merely similar-looking steps.
 
 ## What this does not cover
 

@@ -65,24 +65,11 @@ jobs:
           node-version-file: .nvmrc
           registry-url: ${{ env.REGISTRY }}
 
+      # Pinned to the same tag as this workflow, for the same reason as semver-label below.
       - name: Require a build hook where there is a build to run
-        env:
-          PACKAGE_DIR: ${{ inputs.workspace }}
-        run: |
-          set -euo pipefail
-          node -e '
-            const pkg = require(`${process.cwd()}/${process.env.PACKAGE_DIR}/package.json`)
-            const scripts = pkg.scripts || {}
-            const hooks = ["prepare", "prepack", "prepublishOnly"].filter((h) => scripts[h])
-            if (!scripts.build) {
-              console.log(`${pkg.name} has no build script, so there is nothing for a hook to run.`)
-            } else if (!hooks.length) {
-              console.log(`::error::${pkg.name} has a build script but no prepare, prepack or prepublishOnly to run it, so npm publish would package whatever happens to be on disk. Add one.`)
-              process.exit(1)
-            } else {
-              console.log(`Build hook(s) present: ${hooks.join(", ")}`)
-            }
-          '
+        uses: sellpy/package-release-actions/require-build-hook@v1
+        with:
+          package-dir: ${{ inputs.workspace }}
 
       # npm ci runs at the repo root, installing every workspace, and against whatever
       # .npmrc the calling repo commits. See README.md for why that order matters.
