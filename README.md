@@ -1,10 +1,13 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Three things live here:
+Shared release plumbing for Sellpy's npm packages. Four things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
   definition of that rule.
+- **`require-build-hook`** — a composite action that fails when a package has a `build` script
+  but no npm lifecycle hook to run it. Internal to the workflows below rather than something a
+  caller invokes.
 - **`.github/workflows/npm-publish-master.yml`** — a reusable workflow that publishes a
   single-package repo from its default branch.
 - **`.github/workflows/npm-publish-preview.yml`** — a reusable workflow that publishes a
@@ -176,7 +179,12 @@ Neither workflow here builds explicitly. Both rely on npm's lifecycle hooks — 
 `prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the build stays
 defined by the repo rather than duplicated in shared CI.
 
-The check is deliberately narrow: **a package with a `build` script must have a hook that runs
+That check lives in the `require-build-hook` action rather than inline in each workflow. It was
+duplicated verbatim in every one of them, differing only in which directory's `package.json` it
+read, which is the same shape that earned `semver-label` its own action: one rule, one
+parameter, several callers.
+
+The rule is deliberately narrow: **a package with a `build` script must have a hook that runs
 it.** A package with no `build` script has nothing to build and passes. That distinction
 matters — `@sellpy/design-system-commons` publishes source directories with no build step at
 all, and a blanket "must have a hook" rule would fail it for no reason, forcing either a skip
@@ -235,8 +243,16 @@ repo itself.
 Consumers pin `@v1`. The `v1` tag moves as fixes land; cut `v2` for a breaking change to
 inputs or behaviour.
 
-`npm-publish-master.yml` references `semver-label@v1` internally, so the two are released
-as a pair — bump both when cutting a new major.
+The workflows reference `semver-label@v1` and `require-build-hook@v1` internally, by absolute
+path with the tag hardcoded, so everything here is released together — bump all of it when
+cutting a new major. A `./`-relative path is not an option: inside a reusable workflow it
+resolves against the *caller's* checkout rather than this repo, and expressions are not allowed
+in `uses:`.
+
+The practical consequence is that a new internal action cannot be referenced until `v1` includes
+it. Because the workflow and the action are resolved at the same tag, moving `v1` to a commit
+containing both is atomic from a consumer's point of view — but cutting a release that moves
+only one of them would break every caller.
 
 ## What this does not cover
 
