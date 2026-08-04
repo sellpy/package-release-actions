@@ -176,12 +176,15 @@ Neither workflow here builds explicitly. Both rely on npm's lifecycle hooks — 
 `prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the build stays
 defined by the repo rather than duplicated in shared CI.
 
-The preview workflow checks that at least one of those hooks exists and fails the run if none
-does. That check is not theoretical: `automation-commons` had no build hook and would have
-published an empty `dist/`, and `react-native-scroll-anchor`'s hook fired but resolved the
-wrong `tsc`. A package published with no build output is the one failure in this pipeline that
+Both check that at least one of those hooks exists and fail the run if none does. That check is
+not theoretical: `automation-commons` had no build hook and would have published an empty
+`dist/`. A package published with no build output is the one failure in this pipeline that
 produces a green run and is discovered by a consumer instead, which is worth a step that
 cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
+
+`fetch-graphql-schema` shows how bad the silent version gets: `main` and `bin` both point into
+`lib/`, which is gitignored, so a publish without its `prepack` would ship a package whose entry
+point and CLI do not exist. Nothing about the run would say so.
 
 `dev` and `canary` are long-lived and re-cut from the default branch by hand, so a hook added
 to the default branch is not present on them until someone merges it across. That is why the
