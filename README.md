@@ -178,15 +178,18 @@ None of the publish workflows here build explicitly. They all rely on npm's life
 `prepare`, `prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the
 build stays defined by the repo rather than duplicated in shared CI.
 
-Both check that at least one of those hooks exists and fail the run if none does. That check is
-not theoretical: `automation-commons` had no build hook and would have published an empty
-`dist/`. A package published with no build output is the one failure in this pipeline that
-produces a green run and is discovered by a consumer instead, which is worth a step that
-cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
+The check is deliberately narrow: **a package with a `build` script must have a hook that runs
+it.** A package with no `build` script has nothing to build and passes. That distinction
+matters — `@sellpy/design-system-commons` publishes source directories with no build step at
+all, and a blanket "must have a hook" rule would fail it for no reason, forcing either a skip
+switch on the contract or a fake `prepack` in the repo.
 
-`fetch-graphql-schema` shows how bad the silent version gets: `main` and `bin` both point into
-`lib/`, which is gitignored, so a publish without its `prepack` would ship a package whose entry
-point and CLI do not exist. Nothing about the run would say so.
+What the rule does catch is the genuinely dangerous state: a build that exists but is not wired
+to publishing. `automation-commons` was in it and would have published an empty `dist/`.
+`fetch-graphql-schema` shows how quiet the failure is — `main` and `bin` both point into `lib/`,
+which is gitignored, so a publish without its `prepack` would ship a package whose entry point
+and CLI do not exist. Nothing about the run would say so, which is why this is worth a step that
+cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
 
 `dev` and `canary` are long-lived and re-cut from the default branch by hand, so a hook added
 to the default branch is not present on them until someone merges it across. That is why the
