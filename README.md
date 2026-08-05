@@ -1,6 +1,6 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Four things live here:
+Shared release plumbing for Sellpy's npm packages. Five things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
@@ -181,10 +181,10 @@ None of the publish workflows here build explicitly. They all rely on npm's life
 `prepare`, `prepack` or `prepublishOnly` — firing during `npm ci` and `npm publish`, so the
 build stays defined by the repo rather than duplicated in shared CI.
 
-That check lives in the `require-build-hook` action rather than inline in each workflow. It was
-duplicated verbatim in every one of them, differing only in which directory's `package.json` it
-read, which is the same shape that earned `semver-label` its own action: one rule, one
-parameter, several callers.
+A check enforces that reliance rather than assuming it, and it lives in the
+`require-build-hook` action rather than inline in each workflow. It was duplicated verbatim in
+every one of them, differing only in which directory's `package.json` it read, which is the same
+shape that earned `semver-label` its own action: one rule, one parameter, several callers.
 
 The rule is deliberately narrow: **a package with a `build` script must have a hook that runs
 it.** A package with no `build` script has nothing to build and passes. That distinction
