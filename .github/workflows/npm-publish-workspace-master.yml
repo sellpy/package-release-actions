@@ -1,0 +1,142 @@
+name: Publish npm package from a workspace
+
+# The default-branch publish path for one workspace of a monorepo. Same contract as
+# npm-publish-master.yml — the registry is the source of truth for the released version,
+# publish happens before the tag — resolved against a workspace directory rather than the
+# repo root.
+#
+# One call publishes one workspace. Callers sequence the calls themselves, which is what
+# keeps a cross-package pin correctly ordered. See README.md.
+
+on:
+  workflow_call:
+    inputs:
+      workspace:
+        description: >
+          Path to the workspace to publish, e.g. packages/react-web. Its basename is also
+          the tag prefix, so that workspace tags react-web_vX.Y.Z.
+        required: true
+        type: string
+      labels:
+        description: >
+          JSON array of the merged pull request's label names. Pass
+          toJSON(github.event.pull_request.labels.*.name).
+        required: true
+        type: string
+      pin-dependency:
+        description: >
+          Optional name@version to pin exactly into this workspace before publishing, for a
+          sibling package published earlier in the same run. The version has to be on the
+          registry already, which is what makes the caller's ordering load-bearing.
+        required: false
+        type: string
+        default: ''
+    secrets:
+      NPM_TOKEN:
+        description: >
+          Token with publish rights on the package and read access to its own versions.
+          Read access matters twice here: the version resolution asks the registry for the
+          current version, and a pinned sibling is installed from the registry.
+        required: true
+    outputs:
+      version:
+        description: The version that was published.
+        value: ${{ jobs.publish.outputs.version }}
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.workspace }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      REGISTRY: https://registry.npmjs.org
+      WORKSPACE: ${{ inputs.workspace }}
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      # Publish the default branch's live tip, not the PR's stale merge preview. See README.md.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          registry-url: ${{ env.REGISTRY }}
+
+      # Pinned to the same tag as this workflow, for the same reason as semver-label below.
+      - name: Require a build hook where there is a build to run
+        uses: sellpy/package-release-actions/require-build-hook@v1
+        with:
+          package-dir: ${{ inputs.workspace }}
+
+      # npm ci runs at the repo root, installing every workspace, and against whatever
+      # .npmrc the calling repo commits. See README.md for why that order matters.
+      - name: Clean npm install
+        run: npm ci
+
+      - name: Prepare npm config for publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          HOST="${REGISTRY#http://}"
+          HOST="${HOST#https://}"
+          printf '//%s/:_authToken=%s\n' "${HOST%/}" "$NPM_TOKEN" > .npmrc
+
+      # Pinned to the same tag as this workflow. The two are released together, so bump
+      # both when cutting a new major. A './'-relative path cannot be used here: inside a
+      # reusable workflow it would resolve against the caller's checkout, not this repo.
+      - name: Resolve semantic version bump
+        id: bump
+        uses: sellpy/package-release-actions/semver-label@v1
+        with:
+          labels: ${{ inputs.labels }}
+
+      # Before the publish, so the pinned version is what ends up in the tarball, and
+      # before any build hook fires so the build sees the pinned sibling.
+      - name: Pin sibling dependency
+        if: inputs.pin-dependency != ''
+        env:
+          PIN: ${{ inputs.pin-dependency }}
+        run: npm install --workspace="$WORKSPACE" --save-exact "$PIN"
+
+      - name: Resolve next version from registry
+        id: version
+        env:
+          BUMP: ${{ steps.bump.outputs.bump }}
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./$WORKSPACE/package.json').name")"
+          # The read is pinned to the registry explicitly. Left unpinned it would follow
+          # any scoped registry override in .npmrc or package.json, so once a package is
+          # published to more than one registry the bump could be computed from the wrong
+          # one and the two would drift apart permanently.
+          CURRENT="$(npm view "$NAME" version --registry="$REGISTRY")"
+          if [ -z "$CURRENT" ]; then
+            echo "::error::$NAME has no published version on $REGISTRY. Publish the first version manually, then this workflow can take over."
+            exit 1
+          fi
+          npm pkg set version="$CURRENT" --workspace="$WORKSPACE"
+          npm version --no-git-tag-version --allow-same-version "$BUMP" --workspace="$WORKSPACE" > /dev/null
+          # Read back rather than parsed from npm version's output, which prefixes the
+          # workspace name when --workspace is used.
+          NEXT="$(node -p "require('./$WORKSPACE/package.json').version")"
+          echo "Registry latest for $NAME is $CURRENT, publishing $NEXT ($BUMP)"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish npm version
+        run: npm publish --workspace="$WORKSPACE" --registry="$REGISTRY"
+
+      # Publish first, tag second. The publish is the irreversible step and the registry
+      # is what the next run reads, so a failure here leaves no stale state: the next run
+      # still resolves the correct next version.
+      - name: Tag published version
+        env:
+          VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          TAG="$(basename "$WORKSPACE")_v$VERSION"
+          git tag "$TAG"
+          git push origin "$TAG"
