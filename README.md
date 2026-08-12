@@ -276,10 +276,38 @@ input this workflow does not need.
 
 ### Ordering is the caller's job, and `needs:` is what does it
 
-`pin-dependency` installs an exact version of a sibling into this workspace before publishing,
-so the published tarball depends on a concrete version rather than a floating range. The version
-has to be on the registry already, which means the call that publishes the sibling must have
-finished — `needs: commons` above is not stylistic, it is the ordering.
+`pin-dependency` writes an exact sibling version into this workspace's `dependencies` before
+publishing, so the published tarball depends on a concrete version rather than a floating range.
+The sibling must have been published first — `needs: commons` above is not stylistic, it is the
+ordering.
+
+### The pin rewrites the manifest and must not install
+
+It uses `npm pkg set`, not `npm install --save-exact`. The difference matters and is easy to
+"fix" in the wrong direction: `npm install` would do two things where only one is wanted —
+rewrite the manifest *and* re-resolve the module.
+
+A monorepo's workspaces are symlinked into the root `node_modules`, so a sibling normally
+resolves to its source directory. Installing a pinned version replaces that link with a copy
+downloaded from the registry, under `packages/<name>/node_modules/`. The published tarball then
+looks correct, and the build silently gets worse.
+
+**This has already happened.** `sellpy/design-system` publishes design tokens as plain
+JavaScript with no type declarations, so TypeScript recovered their types by inferring over the
+source — which it only does outside `node_modules`. Once the pin moved the sibling inside
+`node_modules`, every token import became `any`, and `@sellpy/design-system-react-native@13.0.1`
+shipped 27 `any`s in its `.d.ts` where 12.19.2 had none. The build only warned, so the release
+was green.
+
+Note the interaction that made it possible: while the placeholder version convention is in use,
+a pinned version can never equal the workspace's `0.0.0-managed`, so npm always treats it as an
+outside dependency. Before the placeholder, the requested version happened to match the
+workspace's real one and npm linked it instead — which is why this worked by accident for a long
+time.
+
+Rewriting the manifest alone keeps the sibling resolving through the workspace, which is also
+the more correct build: it compiles against the source of the commit that produced the pinned
+version, rather than a round-trip through the registry.
 
 Sequence the calls with `needs:` rather than letting them fan out. Three parallel calls would
 race, and the failure is not a clean error: `react-web` would install whatever version of

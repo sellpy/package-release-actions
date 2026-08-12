@@ -25,9 +25,10 @@ on:
         type: string
       pin-dependency:
         description: >
-          Optional name@version to pin exactly into this workspace before publishing, for a
-          sibling package published earlier in the same run. The version has to be on the
-          registry already, which is what makes the caller's ordering load-bearing.
+          Optional name@version written into this workspace's dependencies before publishing,
+          for a sibling package published earlier in the same run. Only the manifest is
+          changed — nothing is installed — so the build keeps resolving the sibling through
+          the workspace. See README.md.
         required: false
         type: string
         default: ''
@@ -94,13 +95,22 @@ jobs:
         with:
           labels: ${{ inputs.labels }}
 
-      # Before the publish, so the pinned version is what ends up in the tarball, and
-      # before any build hook fires so the build sees the pinned sibling.
+      # Rewrites the manifest only. It must not reinstall: doing so replaces the workspace
+      # link with a registry copy and silently degrades the build. See README.md.
       - name: Pin sibling dependency
         if: inputs.pin-dependency != ''
         env:
           PIN: ${{ inputs.pin-dependency }}
-        run: npm install --workspace="$WORKSPACE" --save-exact "$PIN"
+        run: |
+          set -euo pipefail
+          NAME="${PIN%@*}"
+          VERSION="${PIN##*@}"
+          if [ -z "$NAME" ] || [ -z "$VERSION" ] || [ "$NAME" = "$PIN" ]; then
+            echo "::error::pin-dependency must be name@version, got '$PIN'."
+            exit 1
+          fi
+          npm pkg set "dependencies.$NAME=$VERSION" --workspace="$WORKSPACE"
+          echo "Pinned $NAME to $VERSION in $WORKSPACE"
 
       - name: Resolve next version from registry
         id: version
