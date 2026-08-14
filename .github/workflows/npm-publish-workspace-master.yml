@@ -39,6 +39,13 @@ on:
           Read access matters twice here: the version resolution asks the registry for the
           current version, and a pinned sibling is installed from the registry.
         required: true
+      NPM_READ_TOKEN:
+        description: >
+          Read-only token for repos whose install needs private @sellpy packages. Written to
+          .npmrc before npm ci. NPM_TOKEN cannot cover this: it is only written afterwards,
+          and a publish token for one package carries no read rights on another. Omit where
+          the repo has no private dependencies.
+        required: false
     outputs:
       version:
         description: The version that was published.
@@ -72,8 +79,25 @@ jobs:
         with:
           package-dir: ${{ inputs.workspace }}
 
-      # npm ci runs at the repo root, installing every workspace, and against whatever
-      # .npmrc the calling repo commits. See README.md for why that order matters.
+      # Repos with private @sellpy dependencies pass NPM_READ_TOKEN so npm ci can read them.
+      # Appended rather than written over the top, so non-secret config the caller commits --
+      # engine-strict and the like -- survives. The empty check is in the shell rather than a
+      # step-level if because the secrets context is not available to one.
+      - name: Prepare npm config for install
+        env:
+          NPM_READ_TOKEN: ${{ secrets.NPM_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_READ_TOKEN:-}" ]; then
+            echo 'No NPM_READ_TOKEN passed; installing against the committed .npmrc.'
+            exit 0
+          fi
+          HOST="${REGISTRY#http://}"
+          HOST="${HOST#https://}"
+          printf '//%s/:_authToken=%s\n' "${HOST%/}" "$NPM_READ_TOKEN" >> .npmrc
+
+      # npm ci runs at the repo root, installing every workspace, and before NPM_TOKEN is
+      # written. See README.md for why that order matters.
       - name: Clean npm install
         run: npm ci
 

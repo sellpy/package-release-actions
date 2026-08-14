@@ -108,8 +108,10 @@ The caller owns the trigger, the concurrency group and the test gate, so each re
 own validation workflow and its own publish secret name. `actions/checkout` inside a
 reusable workflow checks out the *calling* repo, which is what we want.
 
-`labels` is the only input and `NPM_TOKEN` the only secret, which keeps the contract small
-enough to hold stable across `@v1`. Node version (`.nvmrc`), runner (`ubuntu-22.04`) and
+`labels` is the only input and `NPM_TOKEN` the only required secret, which keeps the contract
+small enough to hold stable across `@v1`. Repos with private `@sellpy/*` dependencies also pass
+the optional `NPM_READ_TOKEN` — see [Why `npm ci` runs before the publish token is
+written](#why-npm-ci-runs-before-the-publish-token-is-written). Node version (`.nvmrc`), runner (`ubuntu-22.04`) and
 registry (`https://registry.npmjs.org`) are fixed in the workflow, because they are the same
 in every repo that publishes this way — parameterising them would encode drift rather than
 remove it. An optional input can be added later without a breaking change if one of them
@@ -143,8 +145,8 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
 ```
 
-This contract is smaller than the master one: **no inputs at all**, one secret, and the same
-`version` output. The dist-tag and the version segment both derive from `github.ref_name`, so
+This contract is smaller than the master one: **no inputs at all**, one required secret, and the
+same `version` output. The dist-tag and the version segment both derive from `github.ref_name`, so
 there is nothing for a caller to pass and nothing for two repos to disagree about. As with the
 master workflow, the caller owns the trigger, the concurrency group and the validation gate.
 
@@ -205,13 +207,22 @@ check lives in the shared workflow rather than being fixed once per repo.
 
 ### Why `npm ci` runs before the publish token is written
 
-Both workflows install first and only then overwrite `.npmrc` with `NPM_TOKEN`. The order is
-deliberate and easy to "tidy" into a bug.
+All three workflows install first and only then overwrite `.npmrc` with `NPM_TOKEN`. The order
+is deliberate and easy to "tidy" into a bug.
 
-`npm ci` runs against whatever `.npmrc` the calling repo commits. Where a repo has private
-`@sellpy/*` dependencies — `pdf-creator` is the current case — that committed token is what can
-read them, and `NPM_TOKEN` generally cannot: a publish token for one package carries no read
-rights on another. Writing `NPM_TOKEN` before installing therefore breaks the install.
+Where a repo has private `@sellpy/*` dependencies — `pdf-creator` and `design-system` are the
+current cases — the install needs a token that can *read* them, and `NPM_TOKEN` generally
+cannot: a publish token for one package carries no read rights on another. Writing `NPM_TOKEN`
+before installing therefore breaks the install.
+
+Those repos pass the optional `NPM_READ_TOKEN` secret, which is appended to `.npmrc` in a step
+before `npm ci`. Appended rather than written over the top, so any non-secret config the repo
+commits — `engine-strict` and the like — survives; the publish step then overwrites the file, so
+the read token does not linger into the publish. Repos with no private dependencies pass
+nothing and the step is a no-op.
+
+Use a **read-only** token. It is the least it needs, and it is the one credential here that a
+repo hands to every install rather than only to the publish step.
 
 What makes it worth documenting rather than leaving to be rediscovered is the error you get.
 npm answers **404, not 403**, for a private package the caller may not fetch, so the failure
@@ -264,9 +275,9 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
 ```
 
-Two inputs are required — `workspace` and `labels` — plus the same `NPM_TOKEN` secret and
-`version` output as the single-package workflow, and the same `contents: write` requirement in
-the caller.
+Two inputs are required — `workspace` and `labels` — plus the same `NPM_TOKEN` secret, the same
+optional `NPM_READ_TOKEN`, the same `version` output as the single-package workflow, and the same
+`contents: write` requirement in the caller.
 
 ### The tag prefix is derived, not configured
 
