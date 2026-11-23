@@ -87,7 +87,6 @@ jobs:
         env:
           PIN: ${{ inputs.pin-dependency }}
         run: |
-          set -euo pipefail
           NAME="${PIN%@*}"
           VERSION="${PIN##*@}"
           if [ -z "$NAME" ] || [ -z "$VERSION" ] || [ "$NAME" = "$PIN" ]; then
@@ -113,7 +112,6 @@ jobs:
         env:
           BUMP: ${{ steps.bump.outputs.bump }}
         run: |
-          set -euo pipefail
           NAME="$(node -p "require('./$WORKSPACE/package.json').name")"
           # The read is pinned to the registry explicitly. Left unpinned it would follow
           # any scoped registry override in .npmrc or package.json, so once a package is
@@ -143,7 +141,6 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.next }}
         run: |
-          set -euo pipefail
           TAG="$(basename "$WORKSPACE")_v$VERSION"
           git tag "$TAG"
           git push origin "$TAG"

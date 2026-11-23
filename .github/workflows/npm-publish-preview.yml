@@ -38,7 +38,6 @@ jobs:
       - name: Resolve preview version from branch and commit
         id: version
         run: |
-          set -euo pipefail
           # npm versions and dist-tags cannot contain '/', and branch names can: a branch
           # like int-2497/urbify would otherwise produce an invalid version.
           SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"

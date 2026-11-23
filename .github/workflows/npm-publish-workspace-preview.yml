@@ -51,7 +51,6 @@ jobs:
         env:
           PIN: ${{ inputs.pin-dependency }}
         run: |
-          set -euo pipefail
           NAME="${PIN%@*}"
           VERSION="${PIN##*@}"
           if [ -z "$NAME" ] || [ -z "$VERSION" ] || [ "$NAME" = "$PIN" ]; then
@@ -64,7 +63,6 @@ jobs:
       - name: Resolve preview version from branch and commit
         id: version
         run: |
-          set -euo pipefail
           SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
           NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           npm pkg set version="$NEXT" --workspace="$WORKSPACE"

@@ -64,7 +64,6 @@ jobs:
         env:
           BUMP: ${{ steps.bump.outputs.bump }}
         run: |
-          set -euo pipefail
           NAME="$(node -p "require('./package.json').name")"
           TAGS="$(npm dist-tag ls "$NAME" --registry="$REGISTRY")"
           CURRENT="$(printf '%s\n' "$TAGS" | awk '$1 == "latest:" {print $2}')"
@@ -85,6 +84,5 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.next }}
         run: |
-          set -euo pipefail
           git tag "v$VERSION"
           git push origin "v$VERSION"
