@@ -61,3 +61,11 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: npm publish --registry="$REGISTRY" --tag="$TAG"
+
+      - name: Show install command
+        run: |
+          PACKAGE="$(node -p "const p = require('./package.json'); p.name + '@' + p.version")"
+          {
+            printf '### Install preview\n\n'
+            printf '~~~sh\nnpm install %s\n~~~\n' "$PACKAGE"
+          } >> "$GITHUB_STEP_SUMMARY"
