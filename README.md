@@ -32,7 +32,8 @@ are made to anyone outside Sellpy, and issues or pull requests from outside are 
    - Master/workspace: `id-token: write` and `contents: write`.
    - Preview: `id-token: write` and `contents: read`.
 4. Follow [npm's trusted publisher setup](https://docs.npmjs.com/trusted-publishers/#for-github-actions)
-   for each package and enable **Allow npm publish**.
+   for each package and enable **Allow npm publish**. Master workflows also need
+   **Allow npm dist-tag** to read `latest` via OIDC; no registry-read token is needed.
 
 ## Why the version is not in package.json
 

@@ -97,6 +97,17 @@ jobs:
           npm pkg set "dependencies.$NAME=$VERSION" --workspace="$WORKSPACE"
           echo "Pinned $NAME to $VERSION in $WORKSPACE"
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
+
+      - name: Prepare npm for trusted publishing
+        run: |
+          : > .npmrc
+          npm install --global 'npm@^11.21.0' --registry="$REGISTRY"
+
       - name: Resolve next version from registry
         id: version
         env:
@@ -108,9 +119,10 @@ jobs:
           # any scoped registry override in .npmrc or package.json, so once a package is
           # published to more than one registry the bump could be computed from the wrong
           # one and the two would drift apart permanently.
-          CURRENT="$(npm view "$NAME" version --registry="$REGISTRY")"
+          TAGS="$(npm dist-tag ls "$NAME" --registry="$REGISTRY")"
+          CURRENT="$(printf '%s\n' "$TAGS" | awk '$1 == "latest:" {print $2}')"
           if [ -z "$CURRENT" ]; then
-            echo "::error::$NAME has no published version on $REGISTRY. Publish the first version manually, then this workflow can take over."
+            echo "::error::$NAME has no valid latest dist-tag on $REGISTRY. Publish the first version or restore latest before retrying."
             exit 1
           fi
           npm pkg set version="$CURRENT" --workspace="$WORKSPACE"
@@ -120,15 +132,6 @@ jobs:
           NEXT="$(node -p "require('./$WORKSPACE/package.json').version")"
           echo "Registry latest for $NAME is $CURRENT, publishing $NEXT ($BUMP)"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          registry-url: ${{ env.REGISTRY }}
-          package-manager-cache: false
-
-      - name: Clear install credentials before publishing
-        run: ': > .npmrc'
 
       - name: Publish npm version
         run: npm publish --workspace="$WORKSPACE" --registry="$REGISTRY"
