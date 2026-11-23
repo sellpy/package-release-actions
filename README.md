@@ -1,6 +1,6 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Five things live here:
+Shared release plumbing for Sellpy's npm packages. Six things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
@@ -14,6 +14,7 @@ Shared release plumbing for Sellpy's npm packages. Five things live here:
   throwaway preview build of a single-package repo from any other branch.
 - **`.github/workflows/npm-publish-workspace-master.yml`** — the default-branch publish for one
   workspace of a monorepo, called once per package.
+- **`.github/workflows/npm-publish-workspace-preview.yml`** — preview publishing for one workspace.
 
 This repository is public so that consuming repositories — including private ones — can
 resolve the action and the reusable workflows without any org-level sharing setting to keep
@@ -306,6 +307,42 @@ That is a behaviour change worth being explicit about for a repo migrating from 
 committed the pin: the *reset* step such a workflow needs disappears along with the push, rather
 than having to be reimplemented here.
 
+## Using the workspace preview workflow
+
+Publishes unique `0.0.0-<branch>-<sha>-<run_id>-<run_attempt>` versions under **`preview`**, never
+`latest`. Requires `workspace`; accepts optional `pin-dependency`; returns `version`.
+The pin changes only the manifest after installation, preserving local workspace links.
+
+```yaml
+name: Publish web preview
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publish-web-preview
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  commons:
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-preview.yml@v2
+    with:
+      workspace: packages/commons
+  web:
+    needs: commons
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-preview.yml@v2
+    with:
+      workspace: packages/react-web
+      pin-dependency: '@sellpy/design-system-commons@${{ needs.commons.outputs.version }}'
+```
+
+For native, use `packages/react-native` and a separate concurrency group. Configure npm trusted
+publishing for both packages and each calling workflow. Installation uses `.nvmrc`; publishing
+and its lifecycle hooks use Node 24. The install command appears in the run summary.
+
 ## Using the label action on its own
 
 The PR gate needs the same rule, without a publish:
@@ -359,8 +396,5 @@ input, not merely similar-looking steps.
 
 ## What this does not cover
 
-- **Monorepo preview builds.** `npm-publish-preview.yml` reads the repo root, so
-  `sellpy/design-system`'s preview path still needs a workspace-aware variant. Deferred until
-  the master path here has shipped a release.
 - **Release-triggered packages.** `sellpy/react-native-scroll-anchor` publishes on a GitHub
   release rather than a labelled merge.

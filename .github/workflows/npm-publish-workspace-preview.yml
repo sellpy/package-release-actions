@@ -1,0 +1,92 @@
+name: Publish npm preview from a workspace
+
+on:
+  workflow_call:
+    inputs:
+      workspace:
+        description: Path to the workspace to publish, e.g. packages/react-web.
+        required: true
+        type: string
+      pin-dependency:
+        description: Optional name@version written into the workspace dependencies without reinstalling.
+        required: false
+        type: string
+        default: ''
+    outputs:
+      version:
+        description: The version that was published.
+        value: ${{ jobs.publish.outputs.version }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish preview of ${{ inputs.workspace }}
+    runs-on: ubuntu-24.04
+    env:
+      REGISTRY: https://registry.npmjs.org
+      WORKSPACE: ${{ inputs.workspace }}
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Require a build hook where there is a build to run
+        uses: sellpy/package-release-actions/require-build-hook@v1
+        with:
+          package-dir: ${{ inputs.workspace }}
+
+      - name: Clean npm install
+        run: npm ci
+
+      - name: Pin sibling dependency
+        if: inputs.pin-dependency != ''
+        env:
+          PIN: ${{ inputs.pin-dependency }}
+        run: |
+          set -euo pipefail
+          NAME="${PIN%@*}"
+          VERSION="${PIN##*@}"
+          if [ -z "$NAME" ] || [ -z "$VERSION" ] || [ "$NAME" = "$PIN" ]; then
+            echo "::error::pin-dependency must be name@version, got '$PIN'."
+            exit 1
+          fi
+          npm pkg set "dependencies.$NAME=$VERSION" --workspace="$WORKSPACE"
+          echo "Pinned $NAME to $VERSION in $WORKSPACE"
+
+      - name: Resolve preview version from branch and commit
+        id: version
+        run: |
+          set -euo pipefail
+          SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
+          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          npm pkg set version="$NEXT" --workspace="$WORKSPACE"
+          echo "Publishing $NEXT under the preview dist-tag"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
+
+      - name: Clear install credentials before publishing
+        run: ': > .npmrc'
+
+      - name: Publish npm version
+        run: npm publish --workspace="$WORKSPACE" --registry="$REGISTRY" --tag=preview
+
+      - name: Show install command
+        run: |
+          PACKAGE="$(node -p "const p = require(require('path').resolve(process.env.WORKSPACE, 'package.json')); p.name + '@' + p.version")"
+          {
+            printf '### Install preview\n\n'
+            printf '~~~sh\nnpm install %s\n~~~\n' "$PACKAGE"
+          } >> "$GITHUB_STEP_SUMMARY"
