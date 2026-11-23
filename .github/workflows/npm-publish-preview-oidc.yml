@@ -9,24 +9,25 @@ on:
         description: The version that was published.
         value: ${{ jobs.publish.outputs.version }}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     name: Publish npm preview build with OIDC
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      id-token: write
+    runs-on: ubuntu-24.04
     env:
       REGISTRY: https://registry.npmjs.org
     outputs:
       version: ${{ steps.version.outputs.next }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
 
       - name: Require a build hook where there is a build to run
         uses: sellpy/package-release-actions/require-build-hook@v1
@@ -47,16 +48,14 @@ jobs:
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
           echo "tag=$SEGMENT" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
 
-      - name: Prepare npm for trusted publishing
-        run: |
-          set -euo pipefail
-          : > .npmrc
-          npm install --global npm@11 --registry="$REGISTRY"
+      - name: Clear install credentials before publishing
+        run: ': > .npmrc'
 
       - name: Publish npm version
         env:
