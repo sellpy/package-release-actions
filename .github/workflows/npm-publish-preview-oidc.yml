@@ -42,7 +42,7 @@ jobs:
           # npm versions and dist-tags cannot contain '/', and branch names can: a branch
           # like int-2497/urbify would otherwise produce an invalid version.
           SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
-          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}"
+          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           npm version --no-git-tag-version --allow-same-version "$NEXT" > /dev/null
           echo "Publishing $NEXT under the $SEGMENT dist-tag"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
