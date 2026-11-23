@@ -1,6 +1,6 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Six things live here:
+Shared release plumbing for Sellpy's npm packages. Five things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
@@ -12,8 +12,6 @@ Shared release plumbing for Sellpy's npm packages. Six things live here:
   single-package repo from its default branch.
 - **`.github/workflows/npm-publish-preview.yml`** — a reusable workflow that publishes a
   throwaway preview build of a single-package repo from any other branch.
-- **`.github/workflows/npm-publish-preview-oidc.yml`** — the preview workflow using npm trusted
-  publishing instead of a publish token.
 - **`.github/workflows/npm-publish-workspace-master.yml`** — the default-branch publish for one
   workspace of a monorepo, called once per package.
 
@@ -23,9 +21,17 @@ enabled. That is the only reason it is public: it is an internal tool, built aro
 conventions, and it is unlikely to be useful outside them. No support or stability promises
 are made to anyone outside Sellpy, and issues or pull requests from outside are not expected.
 
-Nothing here is a secret: the actions and workflows contain no credentials. Token-based
-workflows receive the consumer's `NPM_TOKEN` from the calling repository's secrets; the OIDC
-preview workflow needs no publish token.
+## When migrating to v2
+
+`@v1` keeps token-based publishing. `@v2` uses npm trusted publishing (OIDC):
+
+1. Change the workflow reference to `@v2`, keeping the original filename.
+2. Remove the `NPM_TOKEN` secret mapping.
+3. Set the calling job's permissions:
+   - Master/workspace: `id-token: write` and `contents: write`.
+   - Preview: `id-token: write` and `contents: read`.
+4. Follow [npm's trusted publisher setup](https://docs.npmjs.com/trusted-publishers/#for-github-actions)
+   for each package and enable **Allow npm publish**.
 
 ## Why the version is not in package.json
 
@@ -95,11 +101,10 @@ jobs:
     needs: validate
     permissions:
       contents: write
-    uses: sellpy/package-release-actions/.github/workflows/npm-publish-master.yml@v1
+      id-token: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-master.yml@v2
     with:
       labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
 ```
 
 `permissions: contents: write` is required in the caller and is not optional. A called
@@ -108,21 +113,17 @@ declared inside this workflow is a ceiling, not a grant — without it in the ca
 push fails with a 403 that says nothing about permissions.
 
 The caller owns the trigger, the concurrency group and the test gate, so each repo keeps its
-own validation workflow and its own publish secret name. `actions/checkout` inside a
+own validation workflow. `actions/checkout` inside a
 reusable workflow checks out the *calling* repo, which is what we want.
 
-`labels` is the only input and `NPM_TOKEN` the only secret, which keeps the contract small
-enough to hold stable across `@v1`. Node version (`.nvmrc`), runner (`ubuntu-22.04`) and
-registry (`https://registry.npmjs.org`) are fixed in the workflow, because they are the same
-in every repo that publishes this way — parameterising them would encode drift rather than
-remove it. An optional input can be added later without a breaking change if one of them
-ever genuinely needs to vary.
+`labels` is the only input. No publish secret is required. Installation uses `.nvmrc`,
+publishing uses Node 24, and the runner is `ubuntu-24.04`.
 
 The workflow outputs `version`, the version it published.
 
 ## Using the preview-build workflow
 
-A preview build publishes the tip of a branch as `0.0.0-<branch>-<sha>` under a dist-tag named
+A preview build publishes the tip of a branch as `0.0.0-<branch>-<sha>-<run_id>-<run_attempt>` under a dist-tag named
 after the branch, so `npm i @sellpy/commons@canary` — or `@int-2497-urbify` — resolves it. It
 is throwaway: no tag, no release, nothing written back to the branch.
 
@@ -141,55 +142,22 @@ jobs:
     uses: ./.github/workflows/code-validation.yml
   publish:
     needs: validate
-    uses: sellpy/package-release-actions/.github/workflows/npm-publish-preview.yml@v1
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-preview.yml@v2
 ```
 
-This contract is smaller than the master one: **no inputs at all**, one secret, and the same
+This contract is smaller than the master one: **no inputs or secrets**, and the same
 `version` output. The dist-tag and the version segment both derive from `github.ref_name`, so
 there is nothing for a caller to pass and nothing for two repos to disagree about. As with the
 master workflow, the caller owns the trigger, the concurrency group and the validation gate.
-
-No `permissions` block is needed, unlike the master workflow — nothing is pushed back, so the
-default token is already sufficient.
 
 Add `workflow_dispatch` to the trigger where publishing an arbitrary feature branch is
 useful. Branch names are sanitised into the version segment and the dist-tag
 (`int-2497/urbify` → `int-2497-urbify`), so any branch is safe to dispatch against; the
 sanitisation is unconditional rather than an option, because a repo that does not need it is
 unaffected by it.
-
-### Publishing previews with OIDC
-
-Use `npm-publish-preview-oidc.yml` for npm trusted publishing. It has the same version and
-dist-tag behaviour, but accepts no inputs or secrets:
-
-```yaml
-jobs:
-  validate:
-    uses: ./.github/workflows/code-validation.yml
-  publish:
-    needs: validate
-    permissions:
-      contents: read
-      id-token: write
-    uses: sellpy/package-release-actions/.github/workflows/npm-publish-preview-oidc.yml@v1
-```
-
-Keep the same trigger and concurrency configuration as the token-based example. The caller
-must grant `id-token: write`; the reusable workflow cannot grant itself that permission.
-
-In the package's npm settings, add a GitHub Actions trusted publisher for the **calling
-repository and calling workflow filename**, not this shared workflow. Allow direct publishing
-with `npm publish`. The package's `repository.url` must match the calling GitHub repository.
-See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
-
-Installation and version preparation use the caller's `.nvmrc`. Publishing switches to Node 24
-and npm 11 to support OIDC, so publish-time lifecycle hooks must also support Node 24.
-The caller's `.npmrc` is preserved for `npm ci`, then cleared before publishing so a committed
-install token is not used for publishing. OIDC does not authenticate private dependency
-installs; those still need the caller's existing read credentials.
 
 ### Why a preview does not push the version back
 
@@ -201,9 +169,8 @@ commit fails.
 
 Both flags on `npm version` are load-bearing. `--no-git-tag-version` keeps the bump inside the
 runner, so there is no commit and no tag to push and the workflow needs neither a git identity
-nor `contents: write`. `--allow-same-version` is what makes a re-run on an unchanged commit
-succeed, since the version it computes is derived from the SHA and therefore identical to the
-one already in `package.json` from the previous run.
+nor `contents: write`. The run ID and attempt make each publish unique, including reruns:
+npm does not allow overwriting a published version. The branch dist-tag moves to the new version.
 
 One consequence to know about when porting a repo that used to push back: the version field
 it last pushed is now frozen on that branch forever. Reset it to the `0.0.0-managed`
@@ -237,21 +204,6 @@ cannot pass by accident. It runs before `npm ci` so the run fails in seconds.
 to the default branch is not present on them until someone merges it across. That is why the
 check lives in the shared workflow rather than being fixed once per repo.
 
-### Why `npm ci` runs before the publish token is written
-
-Both workflows install first and only then overwrite `.npmrc` with `NPM_TOKEN`. The order is
-deliberate and easy to "tidy" into a bug.
-
-`npm ci` runs against whatever `.npmrc` the calling repo commits. Where a repo has private
-`@sellpy/*` dependencies — `pdf-creator` is the current case — that committed token is what can
-read them, and `NPM_TOKEN` generally cannot: a publish token for one package carries no read
-rights on another. Writing `NPM_TOKEN` before installing therefore breaks the install.
-
-What makes it worth documenting rather than leaving to be rediscovered is the error you get.
-npm answers **404, not 403**, for a private package the caller may not fetch, so the failure
-reads as a missing tarball or a bad version rather than a permissions problem, and the obvious
-next move — checking whether the dependency exists — finds nothing wrong.
-
 ## Using the workspace publish workflow
 
 `npm-publish-workspace-master.yml` is `npm-publish-master.yml` resolved against a workspace
@@ -278,29 +230,26 @@ jobs:
     needs: validate
     permissions:
       contents: write
-    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v1
+      id-token: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v2
     with:
       workspace: packages/commons
       labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
   react-web:
     if: contains(github.event.pull_request.labels.*.name, 'react-web')
     needs: commons
     permissions:
       contents: write
-    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v1
+      id-token: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-workspace-master.yml@v2
     with:
       workspace: packages/react-web
       labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}
       pin-dependency: '@sellpy/design-system-commons@${{ needs.commons.outputs.version }}'
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
 ```
 
-Two inputs are required — `workspace` and `labels` — plus the same `NPM_TOKEN` secret and
-`version` output as the single-package workflow, and the same `contents: write` requirement in
-the caller.
+Requires `workspace` and `labels`; returns `version`. Configure a trusted publisher for each
+workspace package as described in [When migrating to v2](#when-migrating-to-v2).
 
 ### The tag prefix is derived, not configured
 
@@ -381,19 +330,15 @@ repo itself.
 
 ## Versioning
 
-Consumers pin `@v1`. The `v1` tag moves as fixes land; cut `v2` for a breaking change to
-inputs or behaviour.
+See [When migrating to v2](#when-migrating-to-v2) for the publishing changes.
 
-The workflows reference `semver-label@v1` and `require-build-hook@v1` internally, by absolute
-path with the tag hardcoded, so everything here is released together — bump all of it when
-cutting a new major. A `./`-relative path is not an option: inside a reusable workflow it
+The workflows reference the unchanged `semver-label@v1` and `require-build-hook@v1` actions
+internally, by absolute path. A `./`-relative path is not an option: inside a reusable workflow it
 resolves against the *caller's* checkout rather than this repo, and expressions are not allowed
 in `uses:`.
 
-The practical consequence is that a new internal action cannot be referenced until `v1` includes
-it. Because the workflow and the action are resolved at the same tag, moving `v1` to a commit
-containing both is atomic from a consumer's point of view — but cutting a release that moves
-only one of them would break every caller.
+New or changed internal actions must be released at the referenced tag before a workflow can
+use them. Changing the publish workflows does not change the actions pinned at `@v1`.
 
 ## Known duplication, and when to remove it
 

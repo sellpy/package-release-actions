@@ -1,66 +1,39 @@
 name: Publish npm preview build
 
-# DEPRECATED: prefer npm-publish-preview-oidc.yml, which publishes via npm trusted publishing
-# and needs no publish token. This workflow is kept for callers that still pass NPM_TOKEN.
-#
-# The preview path for a single-package npm repo, shared across the organisation. Publishes
-# a throwaway 0.0.0-<branch>-<sha> version under a dist-tag named after the branch, so a
-# consumer can install the tip of a branch without a release.
-#
-# The commit is the source of truth here, the way the registry is on the master path: the
-# version embeds the branch and the short SHA, so it is traceable without a tag and nothing
-# has to be pushed back to the branch. The version field in the caller's package.json is a
-# placeholder and is never read.
-#
-# Callers decide when this runs and what validation gates it. See README.md.
+# Callers configure npm trusted publishing and grant id-token: write. See README.md.
 
 on:
   workflow_call:
-    secrets:
-      NPM_TOKEN:
-        description: Token with publish rights on the package.
-        required: true
     outputs:
       version:
         description: The version that was published.
         value: ${{ jobs.publish.outputs.version }}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
-    name: Publish npm preview build
-    runs-on: ubuntu-22.04
-    permissions:
-      # Nothing is pushed back — no commit, no tag — so read access is all this needs.
-      contents: read
+    name: Publish npm preview build with OIDC
+    runs-on: ubuntu-24.04
     env:
       REGISTRY: https://registry.npmjs.org
     outputs:
       version: ${{ steps.version.outputs.next }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
 
-      # Pinned to the same tag as this workflow. A './'-relative path cannot be used here:
-      # inside a reusable workflow it would resolve against the caller's checkout, not this
-      # repo. The two are released together, so bump both when cutting a new major.
       - name: Require a build hook where there is a build to run
         uses: sellpy/package-release-actions/require-build-hook@v1
 
       - name: Clean npm install
         run: npm ci
-
-      - name: Prepare npm config for publish
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          HOST="${REGISTRY#http://}"
-          HOST="${HOST#https://}"
-          printf '//%s/:_authToken=%s\n' "${HOST%/}" "$NPM_TOKEN" > .npmrc
 
       - name: Resolve preview version from branch and commit
         id: version
@@ -69,13 +42,30 @@ jobs:
           # npm versions and dist-tags cannot contain '/', and branch names can: a branch
           # like int-2497/urbify would otherwise produce an invalid version.
           SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
-          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}"
+          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           npm version --no-git-tag-version --allow-same-version "$NEXT" > /dev/null
           echo "Publishing $NEXT under the $SEGMENT dist-tag"
           echo "next=$NEXT" >> "$GITHUB_OUTPUT"
           echo "tag=$SEGMENT" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: ${{ env.REGISTRY }}
+          package-manager-cache: false
+
+      - name: Clear install credentials before publishing
+        run: ': > .npmrc'
+
       - name: Publish npm version
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: npm publish --registry="$REGISTRY" --tag="$TAG"
+
+      - name: Show install command
+        run: |
+          PACKAGE="$(node -p "const p = require('./package.json'); p.name + '@' + p.version")"
+          {
+            printf '### Install preview\n\n'
+            printf '~~~sh\nnpm install %s\n~~~\n' "$PACKAGE"
+          } >> "$GITHUB_STEP_SUMMARY"
