@@ -1,5 +1,8 @@
 name: Publish npm preview build
 
+# DEPRECATED: prefer npm-publish-preview-oidc.yml, which publishes via npm trusted publishing
+# and needs no publish token. This workflow is kept for callers that still pass NPM_TOKEN.
+#
 # The preview path for a single-package npm repo, shared across the organisation. Publishes
 # a throwaway 0.0.0-<branch>-<sha> version under a dist-tag named after the branch, so a
 # consumer can install the tip of a branch without a release.

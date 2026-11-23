@@ -1,6 +1,6 @@
 # package-release-actions
 
-Shared release plumbing for Sellpy's npm packages. Five things live here:
+Shared release plumbing for Sellpy's npm packages. Six things live here:
 
 - **`semver-label`** — a composite action that resolves a pull request's `major`/`minor`/`patch`
   label to an npm bump type, failing unless exactly one is present. This is the single
@@ -12,6 +12,8 @@ Shared release plumbing for Sellpy's npm packages. Five things live here:
   single-package repo from its default branch.
 - **`.github/workflows/npm-publish-preview.yml`** — a reusable workflow that publishes a
   throwaway preview build of a single-package repo from any other branch.
+- **`.github/workflows/npm-publish-preview-oidc.yml`** — the preview workflow using npm trusted
+  publishing instead of a publish token.
 - **`.github/workflows/npm-publish-workspace-master.yml`** — the default-branch publish for one
   workspace of a monorepo, called once per package.
 
@@ -21,8 +23,9 @@ enabled. That is the only reason it is public: it is an internal tool, built aro
 conventions, and it is unlikely to be useful outside them. No support or stability promises
 are made to anyone outside Sellpy, and issues or pull requests from outside are not expected.
 
-Nothing here is a secret: the action and the workflow contain no credentials. Consumers pass
-their own `NPM_TOKEN` in, and it stays in the calling repository's secrets.
+Nothing here is a secret: the actions and workflows contain no credentials. Token-based
+workflows receive the consumer's `NPM_TOKEN` from the calling repository's secrets; the OIDC
+preview workflow needs no publish token.
 
 ## Why the version is not in package.json
 
@@ -156,6 +159,37 @@ useful. Branch names are sanitised into the version segment and the dist-tag
 (`int-2497/urbify` → `int-2497-urbify`), so any branch is safe to dispatch against; the
 sanitisation is unconditional rather than an option, because a repo that does not need it is
 unaffected by it.
+
+### Publishing previews with OIDC
+
+Use `npm-publish-preview-oidc.yml` for npm trusted publishing. It has the same version and
+dist-tag behaviour, but accepts no inputs or secrets:
+
+```yaml
+jobs:
+  validate:
+    uses: ./.github/workflows/code-validation.yml
+  publish:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+    uses: sellpy/package-release-actions/.github/workflows/npm-publish-preview-oidc.yml@v1
+```
+
+Keep the same trigger and concurrency configuration as the token-based example. The caller
+must grant `id-token: write`; the reusable workflow cannot grant itself that permission.
+
+In the package's npm settings, add a GitHub Actions trusted publisher for the **calling
+repository and calling workflow filename**, not this shared workflow. Allow direct publishing
+with `npm publish`. The package's `repository.url` must match the calling GitHub repository.
+See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
+
+Installation and version preparation use the caller's `.nvmrc`. Publishing switches to Node 24
+and npm 11 to support OIDC, so publish-time lifecycle hooks must also support Node 24.
+The caller's `.npmrc` is preserved for `npm ci`, then cleared before publishing so a committed
+install token is not used for publishing. OIDC does not authenticate private dependency
+installs; those still need the caller's existing read credentials.
 
 ### Why a preview does not push the version back
 

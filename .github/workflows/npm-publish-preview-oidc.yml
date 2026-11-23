@@ -1,0 +1,64 @@
+name: Publish npm preview build with OIDC
+
+# Callers configure npm trusted publishing and grant id-token: write. See README.md.
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: The version that was published.
+        value: ${{ jobs.publish.outputs.version }}
+
+jobs:
+  publish:
+    name: Publish npm preview build with OIDC
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGISTRY: https://registry.npmjs.org
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          registry-url: ${{ env.REGISTRY }}
+
+      - name: Require a build hook where there is a build to run
+        uses: sellpy/package-release-actions/require-build-hook@v1
+
+      - name: Clean npm install
+        run: npm ci
+
+      - name: Resolve preview version from branch and commit
+        id: version
+        run: |
+          set -euo pipefail
+          # npm versions and dist-tags cannot contain '/', and branch names can: a branch
+          # like int-2497/urbify would otherwise produce an invalid version.
+          SEGMENT="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')"
+          NEXT="0.0.0-${SEGMENT}-${GITHUB_SHA::7}"
+          npm version --no-git-tag-version --allow-same-version "$NEXT" > /dev/null
+          echo "Publishing $NEXT under the $SEGMENT dist-tag"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "tag=$SEGMENT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: ${{ env.REGISTRY }}
+
+      - name: Prepare npm for trusted publishing
+        run: |
+          set -euo pipefail
+          : > .npmrc
+          npm install --global npm@11 --registry="$REGISTRY"
+
+      - name: Publish npm version
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: npm publish --registry="$REGISTRY" --tag="$TAG"
