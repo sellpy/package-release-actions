@@ -124,7 +124,7 @@ jobs:
             exit 1
           fi
           npm pkg set version="$CURRENT" --workspace="$WORKSPACE"
-          npm version --no-git-tag-version --allow-same-version "$BUMP" --workspace="$WORKSPACE" > /dev/null
+          npm version --no-git-tag-version --allow-same-version --workspaces-update=false "$BUMP" --workspace="$WORKSPACE" > /dev/null
           # Read back rather than parsed from npm version's output, which prefixes the
           # workspace name when --workspace is used.
           NEXT="$(node -p "require('./$WORKSPACE/package.json').version")"
